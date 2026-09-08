@@ -23,6 +23,10 @@ import { ToastService } from '../../core/services/toast.service';
           <p class="mt-1 text-sm text-slate-500">Gestiona tu colección de sitios web</p>
 
           <form [formGroup]="form" (ngSubmit)="submit()" class="mt-6 space-y-4" novalidate>
+            <div *ngIf="errorMessage" class="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-600">
+              {{ errorMessage }}
+            </div>
+
             <div *ngIf="isRegister">
               <label class="label">Nombre</label>
               <input class="input" type="text" formControlName="name" placeholder="Tu nombre" />
@@ -84,6 +88,7 @@ export class LoginComponent {
   isRegister = false;
   loading = false;
   showPassword = false;
+  errorMessage = '';
 
   form = this.fb.group({
     name: ['', Validators.maxLength(120)],
@@ -93,6 +98,8 @@ export class LoginComponent {
   });
 
   submit(): void {
+    this.errorMessage = '';
+
     if (this.form.invalid) {
       this.form.markAllAsTouched();
       return;
@@ -114,7 +121,18 @@ export class LoginComponent {
         this.toast.success(this.isRegister ? 'Cuenta creada.' : 'Bienvenido.');
         this.router.navigate(['/dashboard']);
       },
-      error: () => {}
+      error: (err: any) => {
+        const res = err?.error;
+        if (res?.errors) {
+          this.errorMessage = Object.values(res.errors).flat().join(' ');
+        } else if (res?.message) {
+          this.errorMessage = res.message;
+        } else {
+          this.errorMessage = this.isRegister
+            ? 'No se pudo crear la cuenta. Inténtalo de nuevo.'
+            : 'No se pudo iniciar sesión. Inténtalo de nuevo.';
+        }
+      }
     });
   }
 }
