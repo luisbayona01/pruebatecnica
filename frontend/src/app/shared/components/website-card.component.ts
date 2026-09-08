@@ -14,7 +14,7 @@ import { Website } from '../../core/models/models';
           [src]="favicon"
           alt=""
           class="h-10 w-10 shrink-0 rounded-lg object-contain bg-slate-100 p-1"
-          (error)="favicon = null"
+          (error)="onImgError()"
         />
         <ng-template #fallback>
           <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400 font-semibold">
@@ -69,8 +69,33 @@ export class WebsiteCardComponent {
   @Output() remove = new EventEmitter<Website>();
 
   favicon: string | null = null;
+  private sources: string[] = [];
+  private index = 0;
 
   ngOnInit(): void {
-    this.favicon = this.website.favicon;
+    const host = this.hostOf(this.website.url);
+
+    if (host) {
+      this.sources.push(
+        this.website.favicon || `https://www.google.com/s2/favicons?domain=${host}&sz=64`,
+        `https://icons.duckduckgo.com/ip3/${host}.ico`,
+        `https://${host}/favicon.ico`
+      );
+    }
+
+    this.favicon = this.sources[this.index] ?? null;
+  }
+
+  onImgError(): void {
+    this.index++;
+    this.favicon = this.sources[this.index] ?? null;
+  }
+
+  private hostOf(url: string): string | null {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return null;
+    }
   }
 }

@@ -4,7 +4,9 @@ namespace App\Services;
 
 use App\Models\Category;
 use App\Models\Website;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -48,7 +50,7 @@ class WebsiteImportExportService
      * Importa sitios desde CSV o JSON, validando cada fila de forma
      * independiente y devolviendo un reporte con errores por fila.
      */
-    public function import(\Illuminate\Http\UploadedFile $file, int $userId): array
+    public function import(UploadedFile $file, int $userId): array
     {
         Log::info('[import] Iniciando importación', [
             'user_id' => $userId,
@@ -75,26 +77,50 @@ class WebsiteImportExportService
         $imported = 0;
         $errors = [];
 
-        foreach ($rows as $index => $row) {
-            try {
-                $result = $this->importRow($row, $userId);
-            } catch (\Throwable $e) {
-                Log::error("[import] Error en fila {$index}", [
-                    'message' => $e->getMessage(),
-                    'file' => $e->getFile(),
-                    'line' => $e->getLine(),
-                    'row' => $row,
-                ]);
+        try {
+            DB::transaction(function () use ($rows, $userId, &$imported, &$errors) {
+                $categoryIds = $this->loadCategoryIds($userId);
+                $batch = [];
 
-                $errors[] = ['row' => $index + 1, 'message' => $e->getMessage()];
-                continue;
-            }
+                foreach ($rows as $index => $row) {
+                    try {
+                        $data = $this->buildRow($row, $userId, $categoryIds);
+                    } catch (\Throwable $e) {
+                        Log::error("[import] Error en fila {$index}", [
+                            'message' => $e->getMessage(),
+                            'row' => $row,
+                        ]);
 
-            if (isset($result['error'])) {
-                $errors[] = ['row' => $index + 1, 'message' => $result['error']];
-            } else {
-                $imported++;
-            }
+                        $errors[] = ['row' => $index + 1, 'message' => $e->getMessage()];
+                        continue;
+                    }
+
+                    if (isset($data['error'])) {
+                        $errors[] = ['row' => $index + 1, 'message' => $data['error']];
+                        continue;
+                    }
+
+                    $batch[] = $data;
+                    $imported++;
+
+                    if (count($batch) >= 500) {
+                        Website::insert($batch);
+                        $batch = [];
+                    }
+                }
+
+                if ($batch) {
+                    Website::insert($batch);
+                }
+            });
+        } catch (\Throwable $e) {
+            Log::error('[import] Error fatal durante la transacción', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            throw $e;
         }
 
         Log::info('[import] Finalizado', [
@@ -170,36 +196,36 @@ class WebsiteImportExportService
         return $rows;
     }
 
-    private function importRow(array $row, int $userId): array
+    private function buildRow(array $row, int $userId, array &$categoryIds): array
     {
-        $validator = Validator::make($row, $this->rowRules($userId));
+        $validator = Validator::make($row, $this->rowRules());
 
         if ($validator->fails()) {
             return ['error' => $validator->errors()->first()];
         }
 
-        $category = $this->resolveCategory($row['category'] ?? null, $userId);
+        $categoryId = $this->resolveCategoryId($row['category'] ?? null, $userId, $categoryIds);
 
-        if ($category === null && isset($row['category'])) {
+        if ($categoryId === null && isset($row['category'])) {
             return ['error' => "La categoría \"{$row['category']}\" no existe y no se puede crear."];
         }
 
         $isFavorite = filter_var($row['is_favorite'] ?? false, FILTER_VALIDATE_BOOLEAN);
 
-        Website::create([
+        return [
             'user_id' => $userId,
-            'category_id' => $category->id,
+            'category_id' => $categoryId,
             'name' => $row['name'],
             'url' => $row['url'],
             'description' => $row['description'] ?? null,
-            'is_favorite' => $isFavorite,
+            'is_favorite' => $isFavorite ? 1 : 0,
             'favicon' => $this->faviconFor($row['url']),
-        ]);
-
-        return ['ok' => true];
+            'created_at' => now(),
+            'updated_at' => now(),
+        ];
     }
 
-    private function rowRules(int $userId): array
+    private function rowRules(): array
     {
         return [
             'name' => ['required', 'string', 'max:120'],
@@ -210,17 +236,27 @@ class WebsiteImportExportService
         ];
     }
 
-    private function resolveCategory(?string $name, int $userId): ?Category
+    private function loadCategoryIds(int $userId): array
     {
-        if (blank($name)) {
-            // Sin categoría: usar una por defecto o crear "Sin categoría".
-            return $this->defaultCategory($userId);
+        return Category::where('user_id', $userId)->pluck('id', 'name')->all();
+    }
+
+    private function resolveCategoryId(?string $name, int $userId, array &$categoryIds): ?int
+    {
+        $key = blank($name) ? 'Sin categoría' : $name;
+
+        if (isset($categoryIds[$key])) {
+            return $categoryIds[$key];
         }
 
-        return Category::firstOrCreate(
-            ['name' => $name, 'user_id' => $userId],
-            ['name' => $name, 'user_id' => $userId]
+        $category = Category::firstOrCreate(
+            ['name' => $key, 'user_id' => $userId],
+            ['name' => $key, 'user_id' => $userId]
         );
+
+        $categoryIds[$key] = $category->id;
+
+        return $category->id;
     }
 
     private function faviconFor(?string $url): ?string
@@ -234,13 +270,5 @@ class WebsiteImportExportService
         return $host
             ? "https://www.google.com/s2/favicons?domain={$host}&sz=64"
             : null;
-    }
-
-    private function defaultCategory(int $userId): Category
-    {
-        return Category::firstOrCreate(
-            ['name' => 'Sin categoría', 'user_id' => $userId],
-            ['name' => 'Sin categoría', 'user_id' => $userId]
-        );
     }
 }
