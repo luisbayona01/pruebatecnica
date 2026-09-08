@@ -37,6 +37,7 @@ services:
       L5_SWAGGER_USE_ABSOLUTE_PATH: "false"
     volumes:
       - ./backend/storage:/var/www/html/storage
+      - ./backend/.env:/var/www/html/.env
 
   backend-nginx:
     image: nginx:1.27-alpine

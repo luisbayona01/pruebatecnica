@@ -12,6 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && docker-php-ext-install pdo_mysql mbstring zip \
     && rm -rf /var/lib/apt/lists/*
 
+# Límites de subida y memoria (soportar CSVs/JSON de importación grandes)
+RUN echo 'upload_max_filesize = 50M' > /usr/local/etc/php/conf.d/upload-limits.ini \
+    && echo 'post_max_size = 52M' >> /usr/local/etc/php/conf.d/upload-limits.ini \
+    && echo 'memory_limit = 256M' >> /usr/local/etc/php/conf.d/upload-limits.ini
+
 # Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 

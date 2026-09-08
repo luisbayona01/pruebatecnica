@@ -30,15 +30,23 @@ class ImportExportController extends Controller
 
     public function export(Request $request, string $format): StreamedResponse|JsonResponse
     {
-        $websites = Website::query()
+        $userId = Auth::id();
+
+        $query = Website::query()
             ->with('category')
-            ->visibleTo(Auth::id())
-            ->orderBy('name')
-            ->get();
+            ->orderBy('name');
+
+        if ($userId !== null) {
+            $query->visibleTo($userId);
+        }
+
+        $websites = $query->get();
 
         if ($format === 'json') {
             return response()->json([
                 'data' => WebsiteResource::collection($websites),
+            ], 200, [
+                'Content-Disposition' => 'attachment; filename="websites.json"',
             ]);
         }
 
@@ -53,11 +61,28 @@ class ImportExportController extends Controller
     {
         $file = $request->file('file');
 
+        \Illuminate\Support\Facades\Log::info('[import.controller] Request recibido', [
+            'has_file' => $file !== null,
+            'files' => array_keys($request->allFiles()),
+            'content_type' => $request->header('Content-Type'),
+        ]);
+
         if (! $file || ! $file->isValid()) {
             return response()->json(['message' => 'Debes adjuntar un archivo válido (CSV o JSON).'], 422);
         }
 
-        $report = $this->importExport->import($file, Auth::id());
+        try {
+            $report = $this->importExport->import($file, Auth::id());
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('[import.controller] Excepción durante import', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json(['message' => 'Error interno al importar.'], 500);
+        }
 
         return response()->json(['data' => $report], 201);
     }

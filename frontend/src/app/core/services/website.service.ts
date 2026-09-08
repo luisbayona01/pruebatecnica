@@ -1,8 +1,8 @@
 import { Injectable } from '@angular/core';
-import { Observable } from 'rxjs';
+import { map, Observable } from 'rxjs';
 import { ApiService } from './api.service';
 import { Paginated, Website, WebsiteFilters } from '../models/models';
-import { HttpParams } from '@angular/common/http';
+import { HttpClient, HttpParams } from '@angular/common/http';
 
 @Injectable({ providedIn: 'root' })
 export class WebsiteService extends ApiService {
@@ -41,8 +41,19 @@ export class WebsiteService extends ApiService {
     return this.http.delete<void>(`${this.base}/websites/${id}`);
   }
 
-  exportUrl(format: 'csv' | 'json'): string {
-    return `${this.base}/websites/export/${format}`;
+  export(format: 'csv' | 'json'): Observable<{ blob: Blob; filename: string }> {
+    return this.http
+      .get(`${this.base}/websites/export/${format}`, { responseType: 'blob', observe: 'response' })
+      .pipe(
+        map((res) => {
+          const contentDisposition = res.headers.get('Content-Disposition') ?? '';
+          const match = /filename="?([^";]+)"?/.exec(contentDisposition);
+          return {
+            blob: res.body as Blob,
+            filename: match?.[1] ?? `websites.${format}`,
+          };
+        })
+      );
   }
 
   import(file: File): Observable<{ data: { total: number; imported: number; errors: { row: number; message: string }[] } }> {

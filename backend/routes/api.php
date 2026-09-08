@@ -11,6 +11,11 @@ use Illuminate\Support\Facades\Route;
 Route::post('auth/register', [AuthController::class, 'register'])->name('auth.register');
 Route::post('auth/login', [AuthController::class, 'login'])->name('auth.login');
 
+// Export público (sin token): descarga de sitios en CSV/JSON
+Route::get('websites/export/{format}', [ImportExportController::class, 'export'])
+    ->whereIn('format', ['csv', 'json'])
+    ->name('websites.export');
+
 Route::middleware('auth:api')->group(function () {
     Route::post('auth/logout', [AuthController::class, 'logout'])->name('auth.logout');
     Route::post('auth/refresh', [AuthController::class, 'refresh'])->name('auth.refresh');
@@ -21,9 +26,6 @@ Route::middleware('auth:api')->group(function () {
         ->name('websites.favorite');
     Route::post('websites/preview-url', [ImportExportController::class, 'preview'])
         ->name('websites.preview-url');
-    Route::get('websites/export/{format}', [ImportExportController::class, 'export'])
-        ->whereIn('format', ['csv', 'json'])
-        ->name('websites.export');
     Route::post('websites/import', [ImportExportController::class, 'import'])
         ->name('websites.import');
 

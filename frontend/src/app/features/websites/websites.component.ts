@@ -33,8 +33,10 @@ interface Page {
           <p class="text-sm text-slate-500">Gestiona tu colección de sitios web</p>
         </div>
         <div class="flex items-center gap-2">
-          <a class="btn-secondary hidden sm:inline-flex" [href]="websiteService.exportUrl('csv')">Exportar CSV</a>
-          <a class="btn-secondary hidden sm:inline-flex" [href]="websiteService.exportUrl('json')">Exportar JSON</a>
+          <button class="btn-secondary sm:hidden inline-flex" (click)="export('csv')" title="Exportar CSV">⬇ CSV</button>
+          <button class="btn-secondary sm:hidden inline-flex" (click)="export('json')" title="Exportar JSON">⬇ JSON</button>
+          <button class="btn-secondary hidden sm:inline-flex" (click)="export('csv')">Exportar CSV</button>
+          <button class="btn-secondary hidden sm:inline-flex" (click)="export('json')">Exportar JSON</button>
           <button class="btn-secondary" (click)="fileInput.click()">Importar</button>
           <input #fileInput type="file" accept=".csv,.json" class="hidden" (change)="onImport($event)" />
           <button class="btn-primary" (click)="openCreate()">+ Nuevo sitio</button>
@@ -232,10 +234,39 @@ export class WebsitesComponent {
     });
   }
 
+  export(format: 'csv' | 'json'): void {
+    this.websiteService.export(format).subscribe({
+      next: ({ blob, filename }) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        this.toast.success(`Exportación ${format.toUpperCase()} descargada.`);
+      },
+      error: () => this.toast.error('No se pudo generar la exportación.'),
+    });
+  }
+
   onImport(event: Event): void {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
     if (!file) return;
+
+    const validExt = /\.(csv|json)$/i.test(file.name);
+    if (!validExt) {
+      this.toast.error('El archivo debe ser CSV o JSON.');
+      input.value = '';
+      return;
+    }
+    if (file.size > 50 * 1024 * 1024) {
+      this.toast.error('El archivo supera el límite de 50MB.');
+      input.value = '';
+      return;
+    }
 
     this.websiteService.import(file).subscribe({
       next: (res) => {
@@ -248,7 +279,11 @@ export class WebsitesComponent {
         input.value = '';
         this.reload();
       },
-      error: () => (input.value = '')
+      error: (err) => {
+        const msg = err?.error?.message ?? 'No se pudo importar el archivo.';
+        this.toast.error(msg);
+        input.value = '';
+      }
     });
   }
 }

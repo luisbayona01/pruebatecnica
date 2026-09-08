@@ -5,11 +5,16 @@ namespace App\Services;
 use App\Models\Category;
 use App\Models\Website;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class WebsiteImportExportService
 {
+    public function __construct(
+        private readonly UrlMetadataService $metadata,
+    ) {}
+
     public function exportCsv(Collection $websites): StreamedResponse
     {
         $headers = [
@@ -45,13 +50,45 @@ class WebsiteImportExportService
      */
     public function import(\Illuminate\Http\UploadedFile $file, int $userId): array
     {
-        $rows = $this->parseFile($file);
+        Log::info('[import] Iniciando importación', [
+            'user_id' => $userId,
+            'original_name' => $file->getClientOriginalName(),
+            'extension' => $file->getClientOriginalExtension(),
+            'size' => $file->getSize(),
+            'mime' => $file->getMimeType(),
+        ]);
+
+        try {
+            $rows = $this->parseFile($file);
+        } catch (\Throwable $e) {
+            Log::error('[import] Error parseando archivo', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            throw $e;
+        }
+
+        Log::info('[import] Archivo parseado', ['rows' => count($rows)]);
 
         $imported = 0;
         $errors = [];
 
         foreach ($rows as $index => $row) {
-            $result = $this->importRow($row, $userId);
+            try {
+                $result = $this->importRow($row, $userId);
+            } catch (\Throwable $e) {
+                Log::error("[import] Error en fila {$index}", [
+                    'message' => $e->getMessage(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                    'row' => $row,
+                ]);
+
+                $errors[] = ['row' => $index + 1, 'message' => $e->getMessage()];
+                continue;
+            }
 
             if (isset($result['error'])) {
                 $errors[] = ['row' => $index + 1, 'message' => $result['error']];
@@ -59,6 +96,12 @@ class WebsiteImportExportService
                 $imported++;
             }
         }
+
+        Log::info('[import] Finalizado', [
+            'total' => count($rows),
+            'imported' => $imported,
+            'errors' => count($errors),
+        ]);
 
         return [
             'total' => count($rows),
@@ -100,16 +143,14 @@ class WebsiteImportExportService
         $rows = [];
         $header = null;
 
-        $file->openFile();
         $handle = fopen($file->getRealPath(), 'r');
-
-        // Omitir BOM si existe
-        $first = fgets($handle);
-        rewind($handle);
 
         while (($data = fgetcsv($handle)) !== false) {
             if ($header === null) {
-                $header = array_map(fn ($h) => strtolower(trim($h)), $data);
+                $header = array_map(
+                    fn ($h) => strtolower(trim(str_replace("\xEF\xBB\xBF", '', $h))),
+                    $data
+                );
                 continue;
             }
 
@@ -152,6 +193,7 @@ class WebsiteImportExportService
             'url' => $row['url'],
             'description' => $row['description'] ?? null,
             'is_favorite' => $isFavorite,
+            'favicon' => $this->faviconFor($row['url']),
         ]);
 
         return ['ok' => true];
@@ -179,6 +221,19 @@ class WebsiteImportExportService
             ['name' => $name, 'user_id' => $userId],
             ['name' => $name, 'user_id' => $userId]
         );
+    }
+
+    private function faviconFor(?string $url): ?string
+    {
+        if (blank($url)) {
+            return null;
+        }
+
+        $host = parse_url($url, PHP_URL_HOST);
+
+        return $host
+            ? "https://www.google.com/s2/favicons?domain={$host}&sz=64"
+            : null;
     }
 
     private function defaultCategory(int $userId): Category
